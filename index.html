@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>AI Task Classifier</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+    }
+    h2 {
+      color: #333;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-top: 10px;
+    }
+    th, td {
+      border: 1px solid #ccc;
+      padding: 8px;
+      text-align: left;
+    }
+    th {
+      background-color: #f0f0f0;
+    }
+    button {
+      margin: 10px 5px;
+      padding: 8px 12px;
+      background-color: #007bff;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #0056b3;
+    }
+    input[type="color"] {
+      border: none;
+      background: none;
+      padding: 0;
+    }
+    select {
+      width: 100%;
+      padding: 4px;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <h2>🎯 Smart Task Classifier</h2>
+
+  <button onclick="addTaskRow()">➕ Add Task</button>
+  <button onclick="classifyTasks()">🤖 Classify with AI</button>
+
+  <table id="tasksTable">
+    <thead>
+      <tr>
+        <th>Task</th>
+        <th>Date</th>
+        <th>Time</th>
+        <th>Category (AI)</th>
+        <th>Confidence</th>
+        <th>Color</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      <!-- Dynamic rows go here -->
+    </tbody>
+  </table>
+<div style="margin-top: 15px;">
+  <input type="text" id="newCategoryInput" placeholder="Add new category" />
+  <button onclick="addNewCategory()">➕ Add Category</button>
+</div>
+  <audio id="doneSound" src="https://actions.google.com/sounds/v1/alarms/alarm_clock.ogg" preload="auto"></audio>
+
+  <script>
+    let rowId = 0;
+
+    // Get categories from localStorage or default
+    function getCategories() {
+      const categoriesRaw = localStorage.getItem('taskCategories') || `Work: Related to job
+Personal: Daily chores
+Study: Educational tasks
+Health: Fitness, skincare, body care
+Relationship: Emotional or romantic actions
+Cooking: Meal preparation or kitchen work
+Hobby: Creative or fun personal time
+Self-care: Mental and emotional well-being`;
+      return categoriesRaw
+        .split('\n')
+        .map(line => line.trim().split(':')[0])
+        .filter(Boolean);
+    }
+
+    // Create <select> options from categories, with optional selected
+    function createCategoryDropdown(id, selected) {
+      const categories = getCategories();
+      const select = document.createElement('select');
+      select.id = id;
+      for (const cat of categories) {
+        const option = document.createElement('option');
+        option.value = cat;
+        option.textContent = cat;
+        if (cat === selected) option.selected = true;
+        select.appendChild(option);
+      }
+      return select;
+    }
+
+    function addTaskRow() {
+      const tbody = document.querySelector("#tasksTable tbody");
+      const tr = document.createElement("tr");
+
+      tr.dataset.rowid = rowId;
+
+      tr.innerHTML = `
+        <td><input type="text" placeholder="Task description" id="task_${rowId}"></td>
+        <td><input type="date" id="date_${rowId}"></td>
+        <td><input type="time" id="time_${rowId}"></td>
+        <td id="cat_${rowId}"></td>
+        <td id="conf_${rowId}">-</td>
+        <td><input type="color" id="color_${rowId}" value="#cccccc"></td>
+        <td><button onclick="this.parentNode.parentNode.remove()">❌</button></td>
+      `;
+
+      tbody.appendChild(tr);
+
+      // Append dropdown to category cell
+      const categoryCell = document.getElementById(`cat_${rowId}`);
+      const dropdown = createCategoryDropdown(`cat_select_${rowId}`, '-');
+      categoryCell.appendChild(dropdown);
+
+      rowId++;
+    }
+
+    async function classifyTasks() {
+      const token = 'hf_xxxxxxx';
+      const rows = document.querySelectorAll("#tasksTable tbody tr");
+      if (rows.length === 0) return alert("No tasks to classify!");
+
+      const categoriesRaw = localStorage.getItem('taskCategories') || `Work: Related to job
+Personal: Daily chores
+Study: Educational tasks
+Health: Fitness, skincare, body care
+Relationship: Emotional or romantic actions
+Cooking: Meal preparation or kitchen work
+Hobby: Creative or fun personal time
+Self-care: Mental and emotional well-being`;
+      const candidateLabels = categoriesRaw.split('\n').map(l => l.trim().split(':')[0]).filter(Boolean);
+
+      for (const row of rows) {
+        const i = row.dataset.rowid;
+        const taskInput = document.getElementById(`task_${i}`).value;
+        if (!taskInput) continue;
+
+        try {
+          const res = await fetch('https://api-inference.huggingface.co/models/facebook/bart-large-mnli', {
+            method: 'POST',
+            headers: {
+              Authorization: `Bearer ${token}`,
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              inputs: taskInput,
+              parameters: { candidate_labels: candidateLabels }
+            })
+          });
+
+          const result = await res.json();
+          if (!result.labels || !result.scores) continue;
+
+          const bestLabel = result.labels[0];
+          const confidence = (result.scores[0] * 100).toFixed(1);
+
+          // Update dropdown selection with AI label
+          const catDropdown = document.getElementById(`cat_select_${i}`);
+          if (catDropdown) {
+            // If AI label matches option, select it, else add a new option and select
+            let found = false;
+            for (const option of catDropdown.options) {
+              if (option.value === bestLabel) {
+                catDropdown.value = bestLabel;
+                found = true;
+                break;
+              }
+            }
+            if (!found) {
+              const newOption = document.createElement('option');
+              newOption.value = bestLabel;
+              newOption.textContent = bestLabel;
+              catDropdown.appendChild(newOption);
+              catDropdown.value = bestLabel;
+            }
+          }
+
+          document.getElementById(`conf_${i}`).innerText = `${confidence}%`;
+
+          // Optional: assign color based on label hash
+          const color = '#' + intToColor(hashString(bestLabel));
+          document.getElementById(`color_${i}`).value = color;
+
+        } catch (e) {
+          console.error("Classification error:", e);
+        }
+      }
+
+      document.getElementById('doneSound').play();
+    }
+
+    function hashString(str) {
+      let hash = 0;
+      for (let i = 0; i < str.length; i++) {
+        hash = str.charCodeAt(i) + ((hash << 5) - hash);
+      }
+      return hash;
+    }
+
+    function intToColor(i) {
+      const c = (i & 0x00FFFFFF)
+        .toString(16)
+        .toUpperCase();
+      return "00000".substring(0, 6 - c.length) + c;
+    }
+
+    function addNewCategory() {
+    const input = document.getElementById('newCategoryInput');
+    let newCat = input.value.trim();
+    if (!newCat) return alert('Please enter a category name.');
+
+    // Get current categories
+    let categoriesRaw = localStorage.getItem('taskCategories') || `Work: Related to job
+Personal: Daily chores
+Study: Educational tasks
+Health: Fitness, skincare, body care
+Relationship: Emotional or romantic actions
+Cooking: Meal preparation or kitchen work
+Hobby: Creative or fun personal time
+Self-care: Mental and emotional well-being`;
+
+    let categories = categoriesRaw
+      .split('\n')
+      .map(line => line.trim().split(':')[0])
+      .filter(Boolean);
+
+    if (categories.includes(newCat)) {
+      alert(`Category "${newCat}" already exists.`);
+      return;
+    }
+
+    // Add new category with a default description
+    categories.push(newCat);
+    categoriesRaw += `\n${newCat}: User added category`;
+
+    localStorage.setItem('taskCategories', categoriesRaw);
+
+    // Add new option to all dropdowns
+    const allDropdowns = document.querySelectorAll('select[id^="cat_select_"]');
+    allDropdowns.forEach(dropdown => {
+      const option = document.createElement('option');
+      option.value = newCat;
+      option.textContent = newCat;
+      dropdown.appendChild(option);
+    });
+
+    alert(`Category "${newCat}" added.`);
+
+    input.value = '';
+  }
+  </script>
+</body>
+</html>
